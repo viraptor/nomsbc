@@ -78,3 +78,23 @@ endif()
 # --- Simple test / demo binary ---
 add_executable(nomsbc_demo src/pipeline/demo.c)
 target_link_libraries(nomsbc_demo PRIVATE nomsbc_pipeline)
+
+# --- Darwin speech-enhanced audio tap ---
+if(APPLE)
+    add_library(nomsbc_darwin_core STATIC
+        src/darwin/weights.c
+        src/darwin/dnn_infer.c
+        src/darwin/speech_detect.c
+        src/darwin/audio_tap.c
+    )
+    target_include_directories(nomsbc_darwin_core PUBLIC src)
+    target_link_libraries(nomsbc_darwin_core PUBLIC
+        nomsbc_pipeline
+        "-framework CoreAudio"
+        "-framework AudioToolbox"
+        "-framework CoreFoundation"
+    )
+
+    add_executable(nomsbc_darwin src/darwin/main.c)
+    target_link_libraries(nomsbc_darwin PRIVATE nomsbc_darwin_core)
+endif()
