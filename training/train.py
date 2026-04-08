@@ -248,6 +248,9 @@ def main():
                         help='Enable mixed precision (autocast)')
     parser.add_argument('--profile', action='store_true',
                         help='Profile a few batches and exit')
+    parser.add_argument('--pretrain-samples-per-epoch', type=int, default=0,
+                        help='Random sequences sampled per pretrain epoch '
+                             '(0 = use full dataset)')
     parser.add_argument('--gan-samples-per-epoch', type=int, default=1000,
                         help='Random sequences sampled per GAN epoch '
                              '(0 = use full dataset)')
@@ -258,8 +261,11 @@ def main():
 
     print(f"Device: {device}")
     print(f"Loading dataset from {args.data_dir} ...", flush=True)
+    pretrain_samples = (args.pretrain_samples_per_epoch
+                        if args.pretrain_samples_per_epoch > 0 else None)
     loader = create_dataloader(args.data_dir, args.batch_size, args.seq_len,
-                               num_workers=args.num_workers)
+                               num_workers=args.num_workers,
+                               samples_per_epoch=pretrain_samples)
     ds = loader.dataset
     print(f"  files: {len(getattr(ds, 'files', []))}  "
           f"sequences: {len(ds)}  "
