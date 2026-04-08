@@ -129,20 +129,23 @@ def apply_adacomb_diff(signal, pitch_lag, kernel, gain):
 
 def apply_adaconv_diff(signal, kernel, gain):
     """
-    Differentiable adaptive convolution.
+    Differentiable adaptive (per-sample-kernel) FIR.
+
     signal: (batch, frame_size)
-    kernel: (batch, ADACONV_KERNEL)
-    gain: (batch, 1)
+    kernel: (batch, ADACONV_KERNEL)  -- per-batch FIR taps
+    gain:   (batch, 1)
+
+    Implemented as pad + unfold + einsum, which on MPS is dramatically
+    faster than F.conv1d with groups=batch when batch is large
+    (e.g. B*T = 1600 in vectorized training).
     """
     B, T = signal.shape
-    # Per-sample FIR via F.conv1d with groups=batch
-    sig = signal.unsqueeze(1)  # (B, 1, T)
-    sig_padded = torch.nn.functional.pad(sig, (ADACONV_KERNEL - 1, 0))
-    # Reshape for grouped conv
-    kern = kernel.unsqueeze(1).flip(-1)  # (B, 1, K)
-    out = torch.nn.functional.conv1d(
-        sig_padded.reshape(1, B, -1), kern, groups=B
-    ).reshape(B, T)
+    K = ADACONV_KERNEL
+    sig_padded = torch.nn.functional.pad(signal, (K - 1, 0))   # (B, T+K-1)
+    windows = sig_padded.unfold(-1, K, 1)                       # (B, T, K)
+    # Convolution = correlation with flipped kernel.
+    kern = kernel.flip(-1)                                      # (B, K)
+    out = torch.einsum('btk,bk->bt', windows, kern)             # (B, T)
     return out * gain
 
 

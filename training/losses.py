@@ -45,6 +45,18 @@ def feature_matching_loss(real_features, fake_features):
     return loss / max(count, 1)
 
 
+_WINDOW_CACHE: dict = {}
+
+
+def _get_window(win_size, device, dtype):
+    key = (win_size, device, dtype)
+    w = _WINDOW_CACHE.get(key)
+    if w is None:
+        w = torch.hann_window(win_size, device=device, dtype=dtype)
+        _WINDOW_CACHE[key] = w
+    return w
+
+
 def multi_resolution_stft_loss(predicted, target,
                                 fft_sizes=(512, 1024, 2048),
                                 hop_sizes=(128, 256, 512),
@@ -55,7 +67,7 @@ def multi_resolution_stft_loss(predicted, target,
     """
     loss = 0
     for n_fft, hop, win in zip(fft_sizes, hop_sizes, win_sizes):
-        window = torch.hann_window(win, device=predicted.device)
+        window = _get_window(win, predicted.device, predicted.dtype)
         pred_stft = torch.stft(predicted, n_fft, hop, win, window,
                                return_complex=True).abs()
         targ_stft = torch.stft(target, n_fft, hop, win, window,

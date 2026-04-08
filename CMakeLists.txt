@@ -16,22 +16,32 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/mborgerding/kissfft.git
     GIT_TAG        131.1.0
 )
+set(KISSFFT_TEST OFF CACHE BOOL "" FORCE)
+set(KISSFFT_TOOLS OFF CACHE BOOL "" FORCE)
+set(KISSFFT_STATIC ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(kiss_fft)
 
-# libsbc (optional, for data preparation only)
+# libsbc (vendored: google/libsbc in ./libsbc)
 if(NOMSBC_BUILD_DATAPREP)
-    find_library(SBC_LIB sbc)
-    find_path(SBC_INCLUDE sbc/sbc.h)
-    if(NOT SBC_LIB OR NOT SBC_INCLUDE)
-        message(WARNING "libsbc not found -- data preparation tool will not be built. "
-                        "Install with: apt install libsbc-dev")
+    set(LIBSBC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libsbc)
+    if(NOT EXISTS ${LIBSBC_DIR}/include/sbc.h)
+        message(WARNING "libsbc sources not found at ${LIBSBC_DIR} -- "
+                        "data preparation tool will not be built.")
         set(NOMSBC_BUILD_DATAPREP OFF)
+    else()
+        add_library(sbc STATIC
+            ${LIBSBC_DIR}/src/sbc.c
+            ${LIBSBC_DIR}/src/bits.c
+        )
+        target_include_directories(sbc PUBLIC ${LIBSBC_DIR}/include)
+        target_include_directories(sbc PRIVATE ${LIBSBC_DIR}/src)
     endif()
 endif()
 
-# libsndfile for reading/writing audio files
-find_library(SNDFILE_LIB sndfile)
-find_path(SNDFILE_INCLUDE sndfile.h)
+# libsndfile for reading/writing audio files (via pkg-config)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SNDFILE REQUIRED IMPORTED_TARGET sndfile)
+pkg_check_modules(SAMPLERATE REQUIRED IMPORTED_TARGET samplerate)
 
 # --- DSP library ---
 add_library(nomsbc_dsp STATIC
@@ -63,16 +73,13 @@ target_link_libraries(nomsbc_pipeline PUBLIC nomsbc_modules)
 # --- Data preparation tool ---
 if(NOMSBC_BUILD_DATAPREP)
     add_library(nomsbc_sbc STATIC src/data/sbc_codec.c)
-    target_include_directories(nomsbc_sbc PUBLIC src ${SBC_INCLUDE})
-    target_link_libraries(nomsbc_sbc PUBLIC ${SBC_LIB})
+    target_include_directories(nomsbc_sbc PUBLIC src)
+    target_link_libraries(nomsbc_sbc PUBLIC sbc)
 
     add_executable(prep_data src/data/prep_data.c)
     target_link_libraries(prep_data PRIVATE nomsbc_sbc nomsbc_dsp)
-    if(SNDFILE_LIB AND SNDFILE_INCLUDE)
-        target_compile_definitions(prep_data PRIVATE HAVE_SNDFILE)
-        target_include_directories(prep_data PRIVATE ${SNDFILE_INCLUDE})
-        target_link_libraries(prep_data PRIVATE ${SNDFILE_LIB})
-    endif()
+    target_compile_definitions(prep_data PRIVATE HAVE_SNDFILE)
+    target_link_libraries(prep_data PRIVATE PkgConfig::SNDFILE PkgConfig::SAMPLERATE)
 endif()
 
 # --- Simple test / demo binary ---

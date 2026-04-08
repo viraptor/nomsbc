@@ -59,10 +59,14 @@ def export_model(checkpoint_path, output_path):
     print(f"\nWritten to {output_path}")
 
 
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser(description='Export model weights for C runtime')
     parser.add_argument('checkpoint', help='PyTorch checkpoint path')
     parser.add_argument('-o', '--output', default='nomsbc_weights.bin',
                         help='Output binary file')
     args = parser.parse_args()
     export_model(args.checkpoint, args.output)
+
+
+if __name__ == '__main__':
+    main()

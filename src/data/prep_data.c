@@ -23,9 +23,11 @@
 
 #ifdef HAVE_SNDFILE
 #include <sndfile.h>
+#include <samplerate.h>
 #endif
 
-#define MAX_AUDIO_SAMPLES (16000 * 600)  /* 10 minutes max */
+#define TARGET_SR 16000
+#define MAX_AUDIO_SAMPLES (TARGET_SR * 600)  /* 10 minutes max */
 
 static int read_raw_16k(const char *path, int16_t *pcm, int max_samples)
 {
@@ -37,19 +39,74 @@ static int read_raw_16k(const char *path, int16_t *pcm, int max_samples)
 }
 
 #ifdef HAVE_SNDFILE
+/* Read any-rate / any-channel audio, downmix to mono and resample to 16 kHz. */
 static int read_wav(const char *path, int16_t *pcm, int max_samples)
 {
     SF_INFO info = {0};
     SNDFILE *sf = sf_open(path, SFM_READ, &info);
     if (!sf) return -1;
-    if (info.samplerate != 16000 || info.channels != 1) {
-        fprintf(stderr, "Warning: %s is not 16kHz mono, skipping\n", path);
-        sf_close(sf);
+
+    sf_count_t frames = info.frames;
+    int channels = info.channels;
+    float *interleaved = malloc((size_t)frames * channels * sizeof(float));
+    float *mono = malloc((size_t)frames * sizeof(float));
+    if (!interleaved || !mono) {
+        free(interleaved); free(mono); sf_close(sf);
         return -1;
     }
-    int n = (int)sf_readf_short(sf, pcm, max_samples);
+
+    sf_count_t n = sf_readf_float(sf, interleaved, frames);
     sf_close(sf);
-    return n;
+    if (n <= 0) { free(interleaved); free(mono); return -1; }
+
+    /* Downmix to mono */
+    for (sf_count_t i = 0; i < n; i++) {
+        float s = 0.0f;
+        for (int c = 0; c < channels; c++)
+            s += interleaved[i * channels + c];
+        mono[i] = s / (float)channels;
+    }
+    free(interleaved);
+
+    /* Resample to TARGET_SR if needed */
+    float *resampled = NULL;
+    long out_n;
+    if (info.samplerate != TARGET_SR) {
+        double ratio = (double)TARGET_SR / (double)info.samplerate;
+        long max_out = (long)((double)n * ratio) + 16;
+        resampled = malloc((size_t)max_out * sizeof(float));
+        if (!resampled) { free(mono); return -1; }
+
+        SRC_DATA src = {
+            .data_in = mono,
+            .data_out = resampled,
+            .input_frames = n,
+            .output_frames = max_out,
+            .src_ratio = ratio,
+            .end_of_input = 1,
+        };
+        int err = src_simple(&src, SRC_SINC_MEDIUM_QUALITY, 1);
+        if (err) {
+            fprintf(stderr, "src_simple: %s\n", src_strerror(err));
+            free(mono); free(resampled);
+            return -1;
+        }
+        out_n = src.output_frames_gen;
+        free(mono);
+    } else {
+        resampled = mono;
+        out_n = (long)n;
+    }
+
+    if (out_n > max_samples) out_n = max_samples;
+    for (long i = 0; i < out_n; i++) {
+        float s = resampled[i];
+        if (s >  1.0f) s =  1.0f;
+        if (s < -1.0f) s = -1.0f;
+        pcm[i] = (int16_t)lrintf(s * 32767.0f);
+    }
+    free(resampled);
+    return (int)out_n;
 }
 #endif
 

@@ -123,12 +123,16 @@ class OnTheFlyDataset(Dataset):
 
 
 def create_dataloader(data_dir, batch_size=16, seq_len=100,
-                      num_workers=4, prepared=True):
+                      num_workers=4, prepared=True, pin_memory=None):
     if prepared:
         ds = PreparedDataset(data_dir, seq_len)
     else:
         ds = OnTheFlyDataset(data_dir, seq_len)
 
+    if pin_memory is None:
+        pin_memory = torch.cuda.is_available()
+
     return DataLoader(ds, batch_size=batch_size, shuffle=True,
-                      num_workers=num_workers, pin_memory=True,
+                      num_workers=num_workers, pin_memory=pin_memory,
+                      persistent_workers=num_workers > 0,
                       drop_last=True)
