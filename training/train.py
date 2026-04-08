@@ -248,6 +248,9 @@ def main():
                         help='Enable mixed precision (autocast)')
     parser.add_argument('--profile', action='store_true',
                         help='Profile a few batches and exit')
+    parser.add_argument('--gan-samples-per-epoch', type=int, default=1000,
+                        help='Random sequences sampled per GAN epoch '
+                             '(0 = use full dataset)')
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -288,29 +291,42 @@ def main():
         dt = time.time() - t0
         print(f"Epoch {epoch+1}/{args.pretrain_epochs}  "
               f"STFT loss: {loss:.4f}  ({dt:.1f}s)", flush=True)
-        if (epoch + 1) % 10 == 0:
-            torch.save(model.state_dict(),
-                       f"{args.output_dir}/pretrain_ep{epoch+1}.pt")
+
+    pretrain_path = f"{args.output_dir}/pretrain_final.pt"
+    torch.save(model.state_dict(), pretrain_path)
+    print(f"Saved pretrained model to {pretrain_path}", flush=True)
 
     # Phase 2: GAN training
+    # Use a separate loader that draws a random subset each epoch — keeps
+    # epochs short and varied without iterating the full dataset.
+    if args.gan_samples_per_epoch and args.gan_samples_per_epoch > 0:
+        gan_loader = create_dataloader(
+            args.data_dir, args.batch_size, args.seq_len,
+            num_workers=args.num_workers,
+            samples_per_epoch=args.gan_samples_per_epoch,
+        )
+        print(f"GAN loader: {args.gan_samples_per_epoch} random samples/epoch  "
+              f"({len(gan_loader)} batches)", flush=True)
+    else:
+        gan_loader = loader
+
     print("\n--- Phase 2: GAN training ---", flush=True)
     for epoch in range(args.gan_epochs):
         t0 = time.time()
         desc = f"gan {epoch+1}/{args.gan_epochs}"
         g_loss, d_loss = train_epoch_gan(
-            model, disc, loader, opt_g, opt_d, device, epoch_desc=desc,
+            model, disc, gan_loader, opt_g, opt_d, device, epoch_desc=desc,
             use_amp=args.amp,
         )
         dt = time.time() - t0
         print(f"Epoch {epoch+1}/{args.gan_epochs}  "
               f"G loss: {g_loss:.4f}  D loss: {d_loss:.4f}  ({dt:.1f}s)",
               flush=True)
-        if (epoch + 1) % 10 == 0:
-            torch.save({
-                'generator': model.state_dict(),
-                'discriminator': disc.state_dict(),
-                'epoch': epoch + 1,
-            }, f"{args.output_dir}/gan_ep{epoch+1}.pt")
+        torch.save({
+            'generator': model.state_dict(),
+            'discriminator': disc.state_dict(),
+            'epoch': epoch + 1,
+        }, f"{args.output_dir}/gan_ep{epoch+1}.pt")
 
     # Final save
     torch.save(model.state_dict(), f"{args.output_dir}/final_model.pt")

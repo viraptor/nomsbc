@@ -8,7 +8,7 @@ performs on-the-fly mSBC degradation using a Python SBC wrapper.
 import struct
 import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, RandomSampler
 from pathlib import Path
 
 FEATURE_DIM = 28
@@ -123,7 +123,16 @@ class OnTheFlyDataset(Dataset):
 
 
 def create_dataloader(data_dir, batch_size=16, seq_len=100,
-                      num_workers=4, prepared=True, pin_memory=None):
+                      num_workers=4, prepared=True, pin_memory=None,
+                      samples_per_epoch=None):
+    """
+    Build a DataLoader.
+
+    samples_per_epoch: if set, each epoch draws this many random sequences
+        (without replacement when possible) from the dataset instead of
+        iterating over every sequence. A fresh random subset is drawn each
+        epoch.
+    """
     if prepared:
         ds = PreparedDataset(data_dir, seq_len)
     else:
@@ -131,6 +140,15 @@ def create_dataloader(data_dir, batch_size=16, seq_len=100,
 
     if pin_memory is None:
         pin_memory = torch.cuda.is_available()
+
+    if samples_per_epoch is not None:
+        replacement = samples_per_epoch > len(ds)
+        sampler = RandomSampler(ds, replacement=replacement,
+                                num_samples=samples_per_epoch)
+        return DataLoader(ds, batch_size=batch_size, sampler=sampler,
+                          num_workers=num_workers, pin_memory=pin_memory,
+                          persistent_workers=num_workers > 0,
+                          drop_last=True)
 
     return DataLoader(ds, batch_size=batch_size, shuffle=True,
                       num_workers=num_workers, pin_memory=pin_memory,
